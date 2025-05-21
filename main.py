@@ -1,18 +1,19 @@
 import os
 import json
-import threading
+import asyncio
 from flask import Flask
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
+)
 
-# === Configuration ===
-TOKEN = os.getenv("BOT_TOKEN")  # Telegram bot token
-PORT = int(os.getenv("PORT", 8443))  # For Render
-OWNER_ID = int(os.getenv("ADMIN_ID", "123456789"))  # Your Telegram user ID
-
+# === Config ===
+TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("ADMIN_ID", "123456789"))  # Set this in Render
+PORT = int(os.getenv("PORT", 8443))  # Render sets this automatically
 CHAT_DB_FILE = "chat_ids.json"
 
-# === Flask app for uptime ===
+# === Flask for uptime ping ===
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -32,8 +33,7 @@ def save_chat_ids(ids):
 
 chat_ids = load_chat_ids()
 
-# === Telegram Bot Handlers ===
-
+# === Telegram Handlers ===
 async def save_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = update.effective_chat.id
     if cid not in chat_ids:
@@ -42,7 +42,7 @@ async def save_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_chat(update, context)
-    await update.message.reply_text("Welcome! You are now subscribed to broadcasts.")
+    await update.message.reply_text("You're now subscribed to broadcasts!")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -53,7 +53,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count, failed = 0, 0
 
     if update.message.reply_to_message:
-        # Broadcast media/text by replying
         original = update.message.reply_to_message
         for cid in chat_ids:
             try:
@@ -64,7 +63,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 failed += 1
     elif context.args:
-        # Broadcast plain text
         msg = ' '.join(context.args)
         for cid in chat_ids:
             try:
@@ -78,18 +76,21 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Broadcast complete.\nSent: {count} chats\nFailed: {failed}")
 
-# === Application Setup ===
-
+# === App setup ===
 application = Application.builder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("broadcast", broadcast))
 application.add_handler(MessageHandler(filters.ALL, save_chat))
 
 # === Run both Flask and Bot ===
-
 if __name__ == "__main__":
-    def run_bot():
-        application.run_polling()
+    async def run_bot():
+        await application.initialize()
+        await application.start()
+        print("Bot started.")
+        await application.updater.start_polling()
+        await application.updater.wait()
 
-    threading.Thread(target=run_bot).start()
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_bot())
     flask_app.run(host="0.0.0.0", port=PORT)
